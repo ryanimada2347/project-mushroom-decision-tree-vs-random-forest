@@ -6,15 +6,17 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from pathlib import Path
-
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
     confusion_matrix,
-    classification_report,
-    f1_score
+    classification_report
 )
 
 st.set_page_config(
@@ -24,91 +26,50 @@ st.set_page_config(
 )
 
 st.title("🍄 Mushroom Classification")
-st.subheader("Decision Tree Classifier")
+st.subheader("Perbandingan Decision Tree dan Random Forest")
 st.write(
-    "Klasifikasi jamur berdasarkan karakteristik "
-    "untuk menentukan apakah jamur edible atau poisonous."
+    "Aplikasi klasifikasi jamur menggunakan algoritma "
+    "Decision Tree dan Random Forest."
 )
 
-st.divider()
+@st.cache_data
+def load_dataset():
+    file_path = Path(__file__).parent / "mushrooms.csv"
+    data = pd.read_csv(file_path)
+    return data
 
-st.header("1. Dataset")
+try:
+    dataset = load_dataset()
+except FileNotFoundError:
+    st.error("File mushrooms.csv tidak ditemukan!")
+    st.stop()
 
-uploaded_file = st.file_uploader(
-    "Upload dataset mushrooms.csv (opsional)",
-    type=["csv"]
-)
+if "class" not in dataset.columns:
+    st.error("Kolom target 'class' tidak ditemukan!")
+    st.stop()
 
-if uploaded_file is not None:
-    dataset = pd.read_csv(uploaded_file)
-else:
-    dataset_path = Path(__file__).parent / "mushrooms.csv"
-
-    if not dataset_path.exists():
-        st.warning(
-            "File mushrooms.csv tidak ditemukan. "
-            "Silakan upload dataset terlebih dahulu."
-        )
-        st.stop()
-
-    dataset = pd.read_csv(dataset_path)
-
-st.success("Dataset berhasil dimuat!")
+st.header("1. Informasi Dataset")
 
 col1, col2, col3 = st.columns(3)
 
-with col1:
-    st.metric("Jumlah Data", dataset.shape[0])
+col1.metric("Jumlah Data", dataset.shape[0])
+col2.metric("Jumlah Fitur", dataset.shape[1] - 1)
+col3.metric("Missing Values", int(dataset.isnull().sum().sum()))
 
-with col2:
-    st.metric("Jumlah Kolom", dataset.shape[1])
+with st.expander("Lihat Dataset"):
+    st.dataframe(dataset.head(10), width="stretch")
 
-with col3:
-    st.metric(
-        "Missing Values",
-        dataset.isnull().sum().sum()
-    )
+st.subheader("Distribusi Kelas Jamur")
 
-st.subheader("Preview Dataset")
-st.dataframe(dataset.head(10), use_container_width=True)
-
-st.header("2. Exploratory Data Analysis")
-
-if "class" not in dataset.columns:
-    st.error("Kolom 'class' tidak ditemukan dalam dataset.")
-    st.stop()
-
-st.write("Distribusi kelas jamur:")
-
-class_counts = dataset["class"].value_counts()
-
-fig, ax = plt.subplots(figsize=(8, 4))
-
-sns.histplot(
-    data=dataset,
-    x="class",
-    discrete=True,
-    ax=ax
-)
-
-ax.set_title("Distribusi Kelas Jamur")
+fig, ax = plt.subplots(figsize=(7, 4))
+sns.countplot(data=dataset, x="class", ax=ax)
+ax.set_title("Distribusi Edible dan Poisonous")
 ax.set_xlabel("Class")
-ax.set_ylabel("Jumlah Data")
-
+ax.set_ylabel("Jumlah")
 st.pyplot(fig)
 plt.close(fig)
 
-col1, col2 = st.columns(2)
-
-with col1:
-    st.write("**Nilai unik pada kolom class**")
-    st.write(dataset["class"].unique())
-
-with col2:
-    st.write("**Jumlah masing-masing kelas**")
-    st.dataframe(class_counts)
-
-st.header("3. Data Preprocessing")
+st.header("2. Preprocessing Data")
 
 X = dataset.drop(["class"], axis=1)
 y = dataset["class"]
@@ -118,15 +79,15 @@ X = pd.get_dummies(X)
 encoder = LabelEncoder()
 y = encoder.fit_transform(y)
 
-st.write("**Fitur setelah proses One-Hot Encoding**")
-st.dataframe(X.head(), use_container_width=True)
+class_names = [
+    "Edible" if str(c).lower() == "e"
+    else "Poisonous" if str(c).lower() == "p"
+    else str(c)
+    for c in encoder.classes_
+]
 
-st.write("**Label hasil Label Encoding**")
-st.write(encoder.classes_)
-
-st.write("Jumlah fitur setelah encoding:", X.shape[1])
-
-st.header("4. Data Splitting")
+st.write("Encoding fitur kategorikal berhasil.")
+st.write("Jumlah fitur setelah One-Hot Encoding:", X.shape[1])
 
 X_train, X_test, y_train, y_test = train_test_split(
     X,
@@ -136,194 +97,246 @@ X_train, X_test, y_train, y_test = train_test_split(
     stratify=y
 )
 
+st.write("Jumlah data training:", X_train.shape[0])
+st.write("Jumlah data testing:", X_test.shape[0])
+
+st.header("3. Training Model")
+
+dt_model = DecisionTreeClassifier(
+    criterion="gini",
+    max_depth=3,
+    random_state=0
+)
+
+dt_model.fit(X_train, y_train)
+
+rf_model = RandomForestClassifier(
+    n_estimators=100,
+    criterion="gini",
+    random_state=0,
+    n_jobs=-1
+)
+
+rf_model.fit(X_train, y_train)
+
+st.success("Training kedua model berhasil!")
+
+y_pred_dt = dt_model.predict(X_test)
+y_pred_rf = rf_model.predict(X_test)
+
+st.header("4. Evaluasi dan Perbandingan Model")
+
+def evaluate_model(y_true, y_pred):
+    return {
+        "Accuracy": accuracy_score(y_true, y_pred),
+        "Precision": precision_score(
+            y_true, y_pred, average="weighted", zero_division=0
+        ),
+        "Recall": recall_score(
+            y_true, y_pred, average="weighted", zero_division=0
+        ),
+        "F1-Score": f1_score(
+            y_true, y_pred, average="weighted", zero_division=0
+        )
+    }
+
+dt_results = evaluate_model(y_test, y_pred_dt)
+rf_results = evaluate_model(y_test, y_pred_rf)
+
+comparison = pd.DataFrame(
+    [dt_results, rf_results],
+    index=["Decision Tree", "Random Forest"]
+)
+
+col1, col2 = st.columns(2)
+
+col1.metric(
+    "Decision Tree Accuracy",
+    f"{dt_results['Accuracy'] * 100:.2f}%"
+)
+
+col2.metric(
+    "Random Forest Accuracy",
+    f"{rf_results['Accuracy'] * 100:.2f}%"
+)
+
+st.subheader("Tabel Perbandingan Performa")
+
+st.dataframe(
+    (comparison * 100).round(2).rename_axis("Model"),
+    width="stretch"
+)
+
+st.subheader("Grafik Perbandingan Algoritma")
+
+fig, ax = plt.subplots(figsize=(10, 5))
+
+comparison.plot(
+    kind="bar",
+    ax=ax
+)
+
+ax.set_title("Perbandingan Decision Tree dan Random Forest")
+ax.set_xlabel("Algoritma")
+ax.set_ylabel("Nilai Evaluasi")
+ax.set_ylim(0, 1.05)
+ax.legend(loc="lower right")
+ax.tick_params(axis="x", rotation=0)
+
+st.pyplot(fig)
+plt.close(fig)
+
+if dt_results["Accuracy"] > rf_results["Accuracy"]:
+    best_model = "Decision Tree"
+elif rf_results["Accuracy"] > dt_results["Accuracy"]:
+    best_model = "Random Forest"
+else:
+    best_model = "Keduanya memiliki akurasi yang sama"
+
+st.info(f"Model dengan akurasi tertinggi: **{best_model}**")
+
+st.header("5. Confusion Matrix")
+
+col1, col2 = st.columns(2)
+
+cm_dt = confusion_matrix(
+    y_test, y_pred_dt,
+    labels=np.arange(len(class_names))
+)
+
+cm_rf = confusion_matrix(
+    y_test, y_pred_rf,
+    labels=np.arange(len(class_names))
+)
+
+with col1:
+    st.subheader("Decision Tree")
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(
+        cm_dt,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        xticklabels=class_names,
+        yticklabels=class_names,
+        ax=ax
+    )
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+    st.pyplot(fig)
+    plt.close(fig)
+
+with col2:
+    st.subheader("Random Forest")
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(
+        cm_rf,
+        annot=True,
+        fmt="d",
+        cmap="Greens",
+        xticklabels=class_names,
+        yticklabels=class_names,
+        ax=ax
+    )
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+    st.pyplot(fig)
+    plt.close(fig)
+
+st.header("6. Classification Report")
+
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric("Training Data", X_train.shape[0])
+    st.subheader("Decision Tree")
+    report_dt = classification_report(
+        y_test,
+        y_pred_dt,
+        labels=np.arange(len(class_names)),
+        target_names=class_names,
+        output_dict=True,
+        zero_division=0
+    )
+    st.dataframe(
+        pd.DataFrame(report_dt).transpose().round(4),
+        width="stretch"
+    )
 
 with col2:
-    st.metric("Testing Data", X_test.shape[0])
+    st.subheader("Random Forest")
+    report_rf = classification_report(
+        y_test,
+        y_pred_rf,
+        labels=np.arange(len(class_names)),
+        target_names=class_names,
+        output_dict=True,
+        zero_division=0
+    )
+    st.dataframe(
+        pd.DataFrame(report_rf).transpose().round(4),
+        width="stretch"
+    )
 
-st.write("Training Features:", X_train.shape)
-st.write("Testing Features:", X_test.shape)
+st.header("7. Feature Importance Random Forest")
 
-st.header("5. Modeling Decision Tree")
-
-max_depth = st.slider(
-    "Pilih Maximum Depth",
-    min_value=1,
-    max_value=10,
-    value=3
-)
-
-clf_gini = DecisionTreeClassifier(
-    criterion="gini",
-    max_depth=max_depth,
-    random_state=0
-)
-
-clf_gini.fit(X_train, y_train)
-
-clf_en = DecisionTreeClassifier(
-    criterion="entropy",
-    max_depth=max_depth,
-    random_state=0
-)
-
-clf_en.fit(X_train, y_train)
-
-y_pred_gini = clf_gini.predict(X_test)
-y_pred_train_gini = clf_gini.predict(X_train)
-
-y_pred_en = clf_en.predict(X_test)
-y_pred_train_en = clf_en.predict(X_train)
-
-st.success("Kedua model Decision Tree berhasil dilatih!")
-
-st.header("6. Model Evaluation")
-
-accuracy_gini = accuracy_score(y_test, y_pred_gini)
-accuracy_en = accuracy_score(y_test, y_pred_en)
-
-train_accuracy_gini = accuracy_score(
-    y_train, y_pred_train_gini
-)
-
-train_accuracy_en = accuracy_score(
-    y_train, y_pred_train_en
-)
-
-f1_gini = f1_score(y_test, y_pred_gini)
-f1_en = f1_score(y_test, y_pred_en)
-
-comparison = pd.DataFrame({
-    "Model": ["Gini", "Entropy"],
-    "Training Accuracy": [
-        train_accuracy_gini,
-        train_accuracy_en
-    ],
-    "Testing Accuracy": [
-        accuracy_gini,
-        accuracy_en
-    ],
-    "F1 Score": [
-        f1_gini,
-        f1_en
-    ]
+importance = pd.DataFrame({
+    "Feature": X.columns,
+    "Importance": rf_model.feature_importances_
 })
 
-st.subheader("Perbandingan Model")
+importance = importance.sort_values(
+    by="Importance",
+    ascending=False
+).head(15)
 
-st.dataframe(
-    comparison.style.format({
-        "Training Accuracy": "{:.4f}",
-        "Testing Accuracy": "{:.4f}",
-        "F1 Score": "{:.4f}"
-    }),
-    use_container_width=True
-)
+fig, ax = plt.subplots(figsize=(10, 6))
 
-col1, col2 = st.columns(2)
-
-with col1:
-    st.metric(
-        "Accuracy Gini",
-        f"{accuracy_gini:.4f}"
-    )
-
-with col2:
-    st.metric(
-        "Accuracy Entropy",
-        f"{accuracy_en:.4f}"
-    )
-
-st.subheader("Detail Evaluasi Model")
-
-selected_model = st.selectbox(
-    "Pilih Model Decision Tree",
-    ["Gini", "Entropy"]
-)
-
-if selected_model == "Gini":
-    selected_clf = clf_gini
-    selected_pred = y_pred_gini
-else:
-    selected_clf = clf_en
-    selected_pred = y_pred_en
-
-st.write("### Confusion Matrix")
-
-cm = confusion_matrix(y_test, selected_pred)
-
-fig, ax = plt.subplots(figsize=(7, 5))
-
-sns.heatmap(
-    cm,
-    annot=True,
-    linewidths=0.5,
-    linecolor="red",
-    fmt=".0f",
-    cmap="Blues",
-    xticklabels=["Edible", "Poisonous"],
-    yticklabels=["Edible", "Poisonous"],
+sns.barplot(
+    data=importance,
+    x="Importance",
+    y="Feature",
     ax=ax
 )
 
-ax.set_xlabel("Predicted Label")
-ax.set_ylabel("Actual Label")
-ax.set_title(f"Confusion Matrix - {selected_model}")
-
+ax.set_title("Top 15 Feature Importance - Random Forest")
 st.pyplot(fig)
 plt.close(fig)
 
-st.write("### Classification Report")
+st.header("8. Visualisasi Decision Tree")
 
-report = classification_report(
-    y_test,
-    selected_pred,
-    target_names=["Edible", "Poisonous"],
-    output_dict=True
-)
-
-report_df = pd.DataFrame(report).transpose()
-
-st.dataframe(
-    report_df.style.format("{:.4f}"),
-    use_container_width=True
-)
-
-selected_f1 = f1_score(y_test, selected_pred)
-
-st.metric(
-    "F1 Score",
-    f"{selected_f1:.4f}"
-)
-
-st.header("7. Decision Tree Visualization")
-
-fig, ax = plt.subplots(figsize=(22, 10))
+fig, ax = plt.subplots(figsize=(20, 10))
 
 plot_tree(
-    selected_clf,
+    dt_model,
     feature_names=X.columns,
-    class_names=["Edible", "Poisonous"],
+    class_names=class_names,
     filled=True,
     rounded=True,
-    fontsize=8,
+    fontsize=7,
     ax=ax
 )
 
-ax.set_title(
-    f"Decision Tree - {selected_model} "
-    f"(max_depth={max_depth})"
-)
-
+ax.set_title("Decision Tree - Gini (max_depth=3)")
 st.pyplot(fig)
 plt.close(fig)
 
-st.divider()
+st.header("9. Kesimpulan")
 
-st.caption(
-    "Mushroom Classification | Decision Tree "
-    "using Gini Index and Entropy"
+st.write(
+    f"""
+    Berdasarkan hasil pengujian menggunakan dataset Mushroom Classification:
+
+    - Decision Tree memperoleh accuracy sebesar
+      {dt_results['Accuracy'] * 100:.2f}%.
+    - Random Forest memperoleh accuracy sebesar
+      {rf_results['Accuracy'] * 100:.2f}%.
+    - Model dengan accuracy tertinggi adalah **{best_model}**.
+
+    Perbandingan ini menunjukkan performa kedua algoritma
+    berdasarkan dataset dan pembagian data pengujian yang digunakan.
+    """
 )
+
+st.caption("Mushroom Classification | Decision Tree vs Random Forest")
